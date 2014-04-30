@@ -1,0 +1,8 @@
+#!/bin/sh
+
+set -e
+
+conf="$(php "$(dirname "$(readlink -f "$0")")/make-config.php" "$@")"
+trap "rm \"$conf\"" EXIT
+
+phpunit --configuration="$conf" "$@"
