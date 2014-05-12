@@ -2,111 +2,46 @@
 
 class TeamCity_PHPUnit_Framework_TestListener implements PHPUnit_Framework_TestListener
 {
-    public static function printEvent($eventName, $params = array())
-    {
-        self::printText("\n##teamcity[$eventName");
-        foreach ($params as $key => $value) {
-            self::printText(" $key='$value'");
-        }
-        self::printText("]\n");
-    }
-
-    public static function printText($text)
-    {
-        file_put_contents('php://stderr', $text);
-    }
-
-    private static function getMessage(Exception $e)
-    {
-        $message = "";
-        if (strlen(get_class($e)) != 0) {
-            $message = $message . get_class($e);
-        }
-        if (strlen($message) != 0 && strlen($e->getMessage()) != 0) {
-            $message = $message . " : ";
-        }
-        $message = $message . $e->getMessage();
-        return self::escapeValue($message);
-    }
-
-    private static function getDetails(Exception $e)
-    {
-        return self::escapeValue($e->getTraceAsString());
-    }
-
-    public static function getValueAsString($value)
-    {
-        if (is_null($value)) {
-            return "null";
-        } else if (is_bool($value)) {
-            return $value == true ? "true" : "false";
-        } else if (is_array($value) || is_string($value)) {
-            $valueAsString = print_r($value, true);
-            if (strlen($valueAsString) > 10000) {
-                return null;
-            }
-            return $valueAsString;
-        } else if (is_scalar($value)) {
-            return print_r($value, true);
-        }
-        return null;
-    }
-
-    private static function escapeValue($text)
-    {
-        $text = str_replace("|", "||", $text);
-        $text = str_replace("'", "|'", $text);
-        $text = str_replace("\n", "|n", $text);
-        $text = str_replace("\r", "|r", $text);
-        $text = str_replace("]", "|]", $text);
-        return $text;
-    }
-
-    public static function getFileName($className)
-    {
-        $reflectionClass = new ReflectionClass($className);
-        $fileName = $reflectionClass->getFileName();
-        return $fileName;
-    }
+    //
+    // LISTENER
+    //
 
     public function addError(PHPUnit_Framework_Test $test, Exception $e, $time)
     {
-        self::printEvent("testFailed", array(
-            "name" => $this->getTestName($test),
-            "message" => self::getMessage($e),
-            "details" => self::getDetails($e)
+        $this->echoTeamcityMessage('testFailed', array(
+            'name'    => $this->getTestName($test),
+            'message' => $this->getMessage($e),
+            'details' => $this->getDetails($e),
         ));
     }
 
     public function addFailure(PHPUnit_Framework_Test $test, PHPUnit_Framework_AssertionFailedError $e, $time)
     {
         $params = array(
-            "name" => $this->getTestName($test),
-            "message" => self::getMessage($e),
-            "details" => self::getDetails($e)
+            'name'    => $this->getTestName($test),
+            'message' => $this->getMessage($e),
+            'details' => $this->getDetails($e),
         );
         if ($e instanceof PHPUnit_Framework_ExpectationFailedException) {
             $comparisonFailure = $e->getComparisonFailure();
             if ($comparisonFailure instanceof PHPUnit_Framework_ComparisonFailure) {
-                $actualResult = $comparisonFailure->getActual();
-                $expectedResult = $comparisonFailure->getExpected();
-                $actualString = self::getValueAsString($actualResult);
-                $expectedString = self::getValueAsString($expectedResult);
-                if (!is_null($actualString) && !is_null($expectedString)) {
-                    $params['actual'] = self::escapeValue($actualString);
-                    $params['expected'] = self::escapeValue($expectedString);
+                $actualString   = $this->getValueAsString($comparisonFailure->getActual());
+                $expectedString = $this->getValueAsString($comparisonFailure->getExpected());
+                if ($actualString !== null && $expectedString !== null) {
+                    $params['actual']   = $actualString;
+                    $params['expected'] = $expectedString;
                 }
             }
         }
-        self::printEvent("testFailed", $params);
+        $this->echoTeamcityMessage('testFailed', $params);
     }
 
     public function addIncompleteTest(PHPUnit_Framework_Test $test, Exception $e, $time)
     {
-        self::printEvent("testIgnored", array(
-            "name" => $this->getTestName($test),
-            "message" => self::getMessage($e),
-            "details" => self::getDetails($e)
+        $this->echoTeamcityMessage('testIgnored', array(
+            'name'    => $this->getTestName($test),
+            'message' => $this->getMessage($e),
+            'details' => $this->getDetails($e),
         ));
     }
 
@@ -124,22 +59,22 @@ class TeamCity_PHPUnit_Framework_TestListener implements PHPUnit_Framework_TestL
     {
         $testName = $this->getTestName($test);
         $params = array(
-            "name" => $testName,
-            "captureStandardOutput" => "true"
+            'name'                  => $testName,
+            'captureStandardOutput' => 'true',
         );
         if ($test instanceof PHPUnit_Framework_TestCase) {
             $className = get_class($test);
-            $fileName = self::getFileName($className);
-            $params['locationHint'] = "file://$fileName::\\$className::$testName";
+            $fileName  = $this->getFileWithClass($className);
+            $params['locationHint'] = "file://{$fileName}::\\{$className}::{$testName}";
         }
-        self::printEvent("testStarted", $params);
+        $this->echoTeamcityMessage('testStarted', $params);
     }
 
     public function endTest(PHPUnit_Framework_Test $test, $time)
     {
-        self::printEvent("testFinished", array(
-            "name" => $this->getTestName($test),
-            "duration" => (int)(round($time, 2) * 1000)
+        $this->echoTeamcityMessage('testFinished', array(
+            'name'     => $this->getTestName($test),
+            'duration' => (int) ($time * 1000),
         ));
     }
 
@@ -150,13 +85,13 @@ class TeamCity_PHPUnit_Framework_TestListener implements PHPUnit_Framework_TestL
             return;
         }
         $params = array(
-            "name" => $suiteName,
+            'name' => $suiteName,
         );
         if (class_exists($suiteName, false)) {
-            $fileName = self::getFileName($suiteName);
-            $params['locationHint'] = "file://$fileName::\\$suiteName";
+            $fileName = $this->getFileWithClass($suiteName);
+            $params['locationHint'] = "file://{$fileName}::\\{$suiteName}";
         }
-        self::printEvent("testSuiteStarted", $params);
+        $this->echoTeamcityMessage('testSuiteStarted', $params);
     }
 
     public function endTestSuite(PHPUnit_Framework_TestSuite $suite)
@@ -165,11 +100,63 @@ class TeamCity_PHPUnit_Framework_TestListener implements PHPUnit_Framework_TestL
         if (empty($suiteName)) {
             return;
         }
-        self::printEvent("testSuiteFinished",
-            array(
-                "name" => $suite->getName()
-            ));
+        $this->echoTeamcityMessage('testSuiteFinished', array(
+            'name' => $suiteName,
+        ));
     }
+
+
+    //
+    // TEAMCITY MESSAGES
+    //
+
+    protected function echoTeamcityMessage($messageName, $properties)
+    {
+        $message = "\n##teamcity[{$messageName}";
+        if (is_array($properties)) {
+            foreach ($properties as $k => $v) {
+                $message .= ' ' . $k . '=' . $this->escape($v);
+            }
+        } else {
+            $message .= ' ' . $this->escape($properties);
+        }
+        $message .= "]\n";
+
+        fwrite(STDERR, $message);
+    }
+
+    protected function escape($text)
+    {
+        $escaped = strtr($text, array(
+            "'"  => "|'",
+            "\n" => "|n",
+            "\r" => "|r",
+            "["  => "|[",
+            "]"  => "|]",
+            "|"  => "||",
+        ));
+
+        // converting unicode to |0xABCD
+        $escaped = str_replace('\u', '|0x', preg_replace_callback(
+            '/./u',
+            function ($m) {
+                $ord = ord($m[0]);
+                if ($ord <= 127) {
+                    return $m[0];
+                }
+
+                return trim(json_encode($m[0]), '"');
+            },
+            $escaped
+        ));
+
+        return "'{$escaped}'";
+    }
+
+
+    //
+    // UTILITY
+    //
 
     protected function getTestName(PHPUnit_Framework_Test $test)
     {
@@ -177,5 +164,50 @@ class TeamCity_PHPUnit_Framework_TestListener implements PHPUnit_Framework_TestL
             return $test->getName();
         }
         return get_class($test);
+    }
+
+    protected function getMessage(Exception $e)
+    {
+        $message = get_class($e);
+        $exceptionMessage = $e->getMessage();
+        if ($exceptionMessage != '') {
+            $message .= ' ' . $e->getMessage();
+        }
+        return $message;
+    }
+
+    protected function getDetails(Exception $e)
+    {
+        return $e->getTraceAsString();
+    }
+
+    protected function getValueAsString($value)
+    {
+        if ($value === null) {
+            return 'null';
+        }
+
+        if ($value === true) {
+            return 'true';
+        }
+
+        if ($value === false) {
+            return 'false';
+        }
+
+        if (is_array($value) || is_scalar($value)) {
+            $valueAsString = print_r($value, true);
+            if (strlen($valueAsString) > 10000) {
+                return null;
+            }
+            return $valueAsString;
+        }
+
+        return null;
+    }
+
+    protected function getFileWithClass($className)
+    {
+        return (new ReflectionClass($className))->getFileName();
     }
 }
